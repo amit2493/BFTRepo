@@ -1,0 +1,101 @@
+package com.hyconosys.bft.restCall;
+
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.Arrays;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
+
+import com.hyconosys.bft.model.ResponseVO;
+import com.hyconosys.bft.model.Status;
+
+public class ApiCall {
+	private static final Logger logger = LogManager.getLogger(ApiCall.class);
+
+	public String updateStatus(String status, String stageName, int percentageCompleted) {
+		try {
+			logger.info("Calling api for stage: " + stageName);
+			logger.info("Base url: " + Status.BASE_URL);
+			if (Status.BASE_URL.equals("Nill")) {
+				logger.info("No api url configured");
+				return "";
+			}
+
+			String uriEndpoint = "/api/jenkins/stage";
+			RestTemplate restTemplate = new RestTemplate();
+			HttpHeaders headers = new HttpHeaders();
+			headers.setAccept(Arrays.asList(MediaType.APPLICATION_JSON));
+			headers.setBearerAuth(Status.ACCESS_TOKEN);
+			ResponseVO jsonObj = new ResponseVO(Status.RUN_ID, Status.JOB_ID, status, stageName, percentageCompleted,
+					Status.START_TIME, Status.END_TIME);
+			if ("Output files uploaded".equals(stageName)) {
+				jsonObj.setFtpLocation(Status.FTP_URL.toString());
+				jsonObj = this.getTestResult(jsonObj);
+			}
+			HttpEntity<String> entity = new HttpEntity<String>(jsonObj.toString(), headers);
+			ResponseEntity<String> result = restTemplate.exchange(Status.BASE_URL + uriEndpoint, HttpMethod.POST,
+					entity, String.class);
+			logger.info(result);
+		} catch (RestClientException e) {
+			// TODO Auto-generated catch block
+			logger.error(e);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.error(e);
+			Status.resetStatus();
+		}
+		return "";
+	}
+
+	public ResponseVO getTestResult(ResponseVO jsonObj) {
+		String csvFile = "SAFE_v1.2\\Output\\Loop1\\Report\\StabilityReport.csv";
+		BufferedReader br = null;
+		String line = "";
+		String cvsSplitBy = ",";
+
+		try {
+			br = new BufferedReader(new FileReader(csvFile));
+			while ((line = br.readLine()) != null) {
+
+				// use comma as separator
+				String[] fields = line.split(cvsSplitBy);
+				if (fields[1] != null && "Summary".equals(fields[1].trim())) {
+					jsonObj.setStartTime(fields[3]);
+					jsonObj.setEndTime(fields[4]);
+					jsonObj.setTotalIntendedNumberOfTests(Integer.parseInt(fields[2]));
+					jsonObj.setTotalActualNumberOfTests(Integer.parseInt(fields[6]));
+					jsonObj.setTotalTestsPassed(Integer.parseInt(fields[7]));
+					jsonObj.setTotalTestsFailed(Integer.parseInt(fields[8]));
+					break;
+				}
+
+			}
+
+		} catch (FileNotFoundException e) {
+			logger.error(e);
+		} catch (IOException e) {
+			logger.error(e);
+			Status.resetStatus();
+		} finally {
+			if (br != null) {
+				try {
+					br.close();
+				} catch (IOException e) {
+					logger.error(e);
+				}
+			}
+		}
+		return jsonObj;
+	}
+
+}

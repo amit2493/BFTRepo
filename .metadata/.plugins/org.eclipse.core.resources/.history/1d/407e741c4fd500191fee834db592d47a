@@ -1,0 +1,65 @@
+package com.hyconosys.bft.automation;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.hyconosys.bft.adb.AdbCommunication;
+import com.hyconosys.bft.model.Status;
+
+public class FlashingAutomation  extends Thread{
+	private static final Logger logger = LogManager.getLogger(FlashingAutomation.class);
+	
+	private String buildName;
+	private String buildPath;
+	private String deviceModel;
+	private String buildVersion;
+	private String operator;
+	
+	public FlashingAutomation(String builName,String buildPath) {
+		this.buildName = builName;
+		this.buildPath = buildPath;
+		logger.info("setting build info:"+builName +buildPath);
+		setBuildInfo();
+	}
+	
+	public void run() {
+		try { 
+			
+			String flashingTool = deviceModel.equals("XP8")?"Autoflash_XP8.exe":"Autoflash_XP3.exe";
+			logger.info("Device Model details before flashing:"+flashingTool);
+			String[] command = {"cmd.exe", "/C", "Start", flashingTool, buildPath+buildName };
+			Runtime rn = Runtime.getRuntime();
+			logger.info("Executing command for start flashing:"+command);
+			Process pr = rn.exec(command);
+			pr.waitFor();
+			//Process process = new ProcessBuilder("D:\\test\\"+flashingTool,buildName).start();
+			logger.info("flashing process started:"+flashingTool);
+			Status.MESSAGE =  new StringBuffer("Flashing process started");
+		} catch (Exception e) {
+		logger.error(e);
+		}
+		
+	}
+	// flashing automated
+	public void setBuildInfo() {
+		
+		Pattern pattern = Pattern.compile("\\d{1,2}[A-Z]{1}\\.\\d{1,2}\\.\\d{1,2}\\-\\d{2}\\-\\d{1,2}\\.\\d{1,2}\\.\\d{1,2}\\-\\d{1,2}\\.\\d{1,2}\\.\\d{1,2}");
+		logger.info("Pattern compiling:"+pattern );
+		Matcher matcher = pattern.matcher(buildName);
+		logger.info("BuildName pattern matcher:"+matcher);
+		if(matcher.find()) {
+			String build=matcher.group();
+			logger.info("grouping build matcher:"+build);
+			this.deviceModel = "XP"+build.charAt(0);
+			logger.info("device model:"+build);
+			this.buildVersion = build.substring(build.length()-6);
+			logger.info("build version:"+build);
+			this.operator = build.substring(build.length()-9,build.length()-7);
+			logger.info("operator:bulid length"+build);
+		}
+	}
+
+}

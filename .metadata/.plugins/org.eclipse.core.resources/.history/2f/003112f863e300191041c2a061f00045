@@ -1,0 +1,408 @@
+package com.hyconosys.bft.restapi.controller;
+
+import java.io.File;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.hyconosys.bft.adb.AdbCommunication;
+import com.hyconosys.bft.automation.FlashingAutomation;
+import com.hyconosys.bft.automation.SetupAutomation;
+import com.hyconosys.bft.compress.TAR;
+import com.hyconosys.bft.ftp.FTPFunctions;
+import com.hyconosys.bft.model.BFTModel;
+import com.hyconosys.bft.model.DeviceModel;
+import com.hyconosys.bft.model.ResponseModel;
+import com.hyconosys.bft.model.Status;
+import com.hyconosys.bft.restCall.ApiCall;
+
+@CrossOrigin(origins = "*")
+@RestController
+@EnableScheduling
+public class BFTController {
+	private static final Logger logger = LogManager.getLogger(BFTController.class);
+
+	@Value("${app.bft.setup.wifiname}")
+	private String wifiName;
+	@Value("${app.bft.setup.wifipwd}")
+	private String wifiPwd;
+	@Value("${app.bft.setup.googleid}")
+	private String gmailId;
+	@Value("${app.bft.setup.googlepwd}")
+	private String gmailPwd;
+	@Value("${app.bft.setup.buildpath}")
+	private String buildPath;
+	@Value("${app.bft.setup.ftp_ip}")
+	private String ftpIp;
+	@Value("${app.bft.setup.ftp.username}")
+	private String ftpUser;
+	@Value("${app.bft.setup.ftp.password}")
+	private String ftpPwd;
+	@Value("${app.bft.setup.api.baseurl}")
+	private String baseUrl;
+	@Value("${app.bft.setup.safe.foldername}")
+	private String safeFolder;
+	LocalDateTime current; 
+	DateTimeFormatter format = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
+	ApiCall api = new ApiCall();
+	
+	public BFTController() {
+	}
+	
+	@PostMapping(path = "/startBFT")
+	public ResponseModel startBFT(@RequestBody BFTModel bftModel) {
+		logger.info("Received BFT Start request");
+		current = LocalDateTime.now(); 
+		Status.START_TIME = current.format(format);
+		Status.END_TIME = current.format(format);
+		ResponseModel resultModel = new ResponseModel();
+		try {
+			resultModel.setStatus(Status.STATUS.toString());
+			if (!Status.STATUS.toString().equals("Ready")) {
+				resultModel.setMessage("Some process is going on, Not able to handle request now");
+				logger.info("Some process is going on, Not able to handle request now");
+				return resultModel;
+			}
+			logger.info("RunID :" +bftModel.getRunId());
+			logger.info("JobId :" +bftModel.getJobId());
+			logger.info("accessToken :" +bftModel.getAccessToken());
+			
+			logger.info("Build name: " + bftModel.getBinaryName());
+			if (bftModel.getBinaryName() == null || "".equals(bftModel.getBinaryName())) {
+				resultModel.setMessage("Binary name not specified!");
+				logger.info(Status.MESSAGE);{
+				Status.resetStatus();}
+				return resultModel;
+			}
+			Pattern pattern = Pattern.compile(
+					"\\d{1,2}[A-Z].\\d{1,2}.\\d{1,2}-\\d{1,2}-\\d{1,2}.\\d{1,2}.\\d{1,2}-\\d\\d.\\d{1,3}.\\d{1,3}");
+			Matcher matcher = pattern.matcher(bftModel.getBinaryName());
+			if (matcher.find()) {
+				Status.BUILD_VERSION = new StringBuffer(matcher.group(0));
+			} else {
+				resultModel.setMessage("Invalid binary name");
+				logger.info(Status.MESSAGE);{
+					Status.resetStatus();}	
+				
+				return resultModel;
+			}
+			AdbCommunication adb = new AdbCommunication();
+			adb.getDeviceList();
+			List<DeviceModel> list = Status.deviceList.stream()
+					.filter(x -> x.getDevice().contains("XP" + Status.BUILD_VERSION.substring(0, 1)))
+					.collect(Collectors.toList());
+			if (list == null || list.size() < 2) {
+				resultModel.setMessage("Devices are not available \n" + Status.MESSAGE);
+				logger.info(Status.MESSAGE);{
+					Status.resetStatus();}
+				return resultModel;
+			}
+			int index = Status.BUILD_VERSION.lastIndexOf("-") + 1;
+			String operator = Status.BUILD_VERSION.substring(index, index + 2);
+			if ("29".equals(operator) && (list.get(0).getOperator().indexOf(operator) != 0
+					|| list.get(0).getOperator().indexOf(operator) != 0)) {
+				resultModel.setMessage(
+						"Operator matching devices are not available [" + Status.operator.get(operator) + "]");
+				logger.info(Status.MESSAGE);{
+					Status.resetStatus();}
+				return resultModel;
+			}
+			
+			Status.STATUS = new StringBuffer("In Progress");
+			logger.info("Status In progress");
+			Status.BASE_URL = this.baseUrl;
+			Status.SAFE_FOLDER = this.safeFolder;
+			logger.info("base url:"+Status.BASE_URL +" safe:"+Status.SAFE_FOLDER);
+
+			Status.DEVICE1_ID = new StringBuffer(list.get(0).getDeviceId());
+			Status.DEVICE2_ID = new StringBuffer(list.get(1).getDeviceId());
+			Status.DEVICE1 = Status.deviceList.indexOf(list.get(0));
+			Status.DEVICE2 = Status.deviceList.indexOf(list.get(1));
+			Status.JOB_ID = bftModel.getJobId();
+			Status.RUN_ID = bftModel.getRunId();
+			Status.ACCESS_TOKEN = bftModel.getAccessToken();
+			//Status.FTP_URL = new StringBuffer(bftModel.getFtpLocation());
+			logger.info("Device1 ready to flash");
+			Status.deviceList.get(Status.DEVICE1).setDeviceStatus("Ready to flash");
+			logger.info("Device2 ready to flash");
+			Status.deviceList.get(Status.DEVICE2).setDeviceStatus("Ready to flash");
+			current = LocalDateTime.now(); 
+			Status.END_TIME = current.format(format);
+			api.updateStatus("success", "Before Flashing", 10);
+			File sourceFile = new File(this.buildPath + bftModel.getBinaryName());
+			if (!sourceFile.exists()) {
+				if (bftModel.getFtpLocation() == null || bftModel.getFtpLocation().equals("")) {
+					resultModel.setMessage("FTP location not specified!");
+					return resultModel;
+				}
+				FTPFunctions ftpFunctions = new FTPFunctions(this.ftpIp, 21, this.ftpUser, this.ftpPwd,
+						bftModel.getFtpLocation(), bftModel.getBinaryName(),
+						this.buildPath);
+				ftpFunctions.start();
+				resultModel.setMessage("Downloading Started");
+				logger.info(Status.MESSAGE);
+			} else {
+//				if (Status.STATUS.toString().equals("In Progress")) {
+//					Status.MESSAGE = new StringBuffer("Flashing process started");
+//					logger.info(Status.MESSAGE);
+//					return resultModel;
+//				}
+				Status.MESSAGE = new StringBuffer("Build already downloaded");
+				logger.info("Build already downloaded");
+//				FTPLocal local = new FTPLocal(bftModel.getBineryName(), this.buildPath);
+//				local.start();
+				adb.rebootEDL(Status.DEVICE1_ID.toString());
+				logger.info("Device1 in EDL mode");
+				Status.deviceList.get(Status.DEVICE1).setDeviceStatus("In EDL Mode");
+				adb.rebootEDL(Status.DEVICE2_ID.toString());
+				logger.info("Device2 in EDL mode");
+				Status.deviceList.get(Status.DEVICE2).setDeviceStatus("In EDL Mode");
+				FlashingAutomation automation = new FlashingAutomation(
+						bftModel.getBinaryName().replaceAll(".tar.gz", ""), this.buildPath);
+				automation.start();
+				current = LocalDateTime.now(); 
+				Status.END_TIME = current.format(format);
+				api.updateStatus("success", "Flashing", 30);
+				Status.MESSAGE = new StringBuffer("Flashing process started");
+				logger.info(Status.MESSAGE);
+				resultModel.setStatus(Status.MESSAGE.toString());
+					Status.resetStatus();
+			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.info(Status.STATUS);
+			logger.error(e);
+		}
+		return resultModel;
+	}
+
+	@RequestMapping(path = "/status")
+	public ResponseModel statusBFT() {
+		ResponseModel resultModel = new ResponseModel();
+		logger.info("status request received");
+		try {
+			if (Status.DEVICE1_ID.toString().equals("Nill")) {
+				AdbCommunication adb = new AdbCommunication();
+				List<DeviceModel> list = new ArrayList<DeviceModel>();
+				list = adb.getDeviceList();
+				Status.DEVICE1_ID = new StringBuffer(list.get(0).getDeviceId());
+				Status.DEVICE2_ID = new StringBuffer(list.get(1).getDeviceId());
+			}
+			resultModel.setStatus(Status.STATUS.toString());
+			resultModel.setMessage(
+					Status.MESSAGE.toString() + ", Connected Devices: " + Status.DEVICE1_ID + ", " + Status.DEVICE2_ID);
+			resultModel.setFtplinks(Status.FTP_URL.toString());
+			logger.info(resultModel.getMessage());
+			Status.resetStatus();
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+		}
+		return resultModel;
+	}
+
+	@RequestMapping(path = "/update")
+	public ResponseModel updateBFT(String message) {
+		ResponseModel resultModel = new ResponseModel();
+		try {
+			if ("Testing completed".equals(message)) {
+				current = LocalDateTime.now(); 
+				Status.END_TIME = current.format(format);
+				api.updateStatus("success", "Test complete", 98);
+				Status.MESSAGE = new StringBuffer("Testing completed, Preparing output files");
+				logger.info(Status.MESSAGE);
+				TAR.compress("TestOutput.tar", new File(Status.SAFE_FOLDER+"\\Output\\Loop1"));
+				Status.MESSAGE = new StringBuffer("Files Ready to upload");
+				logger.info(Status.MESSAGE);
+				FTPFunctions ftpFunctions = new FTPFunctions(this.ftpIp, 21, this.ftpUser, this.ftpPwd);
+				ftpFunctions.upload("TestOutput.tar", "TestOutput.tar", "/Logs/Test/");
+				ftpFunctions.upload("Flash_report.jpg", "Flash_report.jpg", "/Logs/Flash/");
+				Status.MESSAGE = new StringBuffer("Output files uploaded successfully: ");
+				Status.FTP_URL = new StringBuffer("{\"flashLog\": \"/Logs/Flash/Flash_report.jpg\", \"testResultLogs\": \"/Logs/Test/TestOutput.tar\"}");
+
+				// logger.info(Status.MESSAGE);
+				logger.info(Status.MESSAGE);
+			}
+			Status.STATUS = new StringBuffer("Ready");
+			current = LocalDateTime.now(); 
+			Status.END_TIME = current.format(format);
+
+			api.updateStatus("success", "Output files uploaded", 100);
+			Status.resetStatus();
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+		}
+		return resultModel;
+	}
+
+	@RequestMapping(path = "/deviceList")
+	public ResponseModel getDeviceList() {
+		ResponseModel resultModel = new ResponseModel();
+		try {
+			List<?> list = new ArrayList<DeviceModel>();
+			logger.info("Device list is in process");
+			if (Status.STATUS.toString().equals("In process")) 
+				list = Status.deviceList;
+				
+			else {
+				AdbCommunication adb = new AdbCommunication();
+				list = adb.getDeviceList();
+			}
+			resultModel.setResponse(list);
+			Status.MESSAGE = new StringBuffer("");
+			resultModel.setMessage("Device list prepared");
+			logger.info("Device list prepared");
+			resultModel.setStatus(Status.STATUS.toString());
+			resultModel.setMessage(Status.MESSAGE.toString());
+			Status.resetStatus();
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+		}
+		return resultModel;
+	}
+
+	@RequestMapping(path = "/startSetup")
+	public ResponseModel doTest() {
+		ResponseModel resultModel = new ResponseModel();
+		try {
+			AdbCommunication adb = new AdbCommunication();
+			Status.deviceList.get(Status.DEVICE1).setDeviceStatus("Flashing comleted");
+			Status.deviceList.get(Status.DEVICE2).setDeviceStatus("Flashing comleted");
+			// adb.checkDeciveReady(Status.DEVICE1_ID.toString());
+			// adb.checkDeciveReady(Status.DEVICE2_ID.toString());
+			logger.info("Flashing comleted:"+"Device1,Device2");
+			logger.info("Waiting for device");
+			current = LocalDateTime.now(); 
+			Status.END_TIME = current.format(format);
+			api.updateStatus("success", "Flash completed", 30);
+			// adb.checkDeciveReady(Status.DEVICE1_ID.toString());
+			// Thread.sleep(1000 * 180);
+			int i = 1;
+			while (i++ < 30) {
+				logger.info("Checking devices");
+				int device1Status = adb.checkDevice(Status.DEVICE1_ID.toString());
+				int device2Status = adb.checkDevice(Status.DEVICE2_ID.toString());
+				logger.info(Status.DEVICE1_ID+" : "+device1Status);
+				logger.info(Status.DEVICE2_ID+" : "+device2Status);
+				if (device1Status == 1 && device2Status == 1) {
+					logger.info("Devices are ready for setup");
+					SetupAutomation setupAutomation = new SetupAutomation(
+							Status.deviceList.get(Status.DEVICE1).getDevice(), Status.DEVICE1_ID.toString(),
+							Status.deviceList.get(Status.DEVICE1).getBuildInfo(), "0.0.0.0", "4723", wifiName, wifiPwd,
+							gmailId, gmailPwd,Status.DEVICE1);
+					setupAutomation.start();
+//					SetupAutomation setupAutomation1 = new SetupAutomation(
+//							Status.deviceList.get(Status.DEVICE2).getDevice(), Status.DEVICE2_ID.toString(),
+//							Status.deviceList.get(Status.DEVICE2).getBuilInfo(), "0.0.0.0", "4724", wifiName, wifiPwd,
+//							gmailId, gmailPwd,Status.DEVICE2);
+//					setupAutomation1.start();
+					Status.MESSAGE = new StringBuffer("Setup wizard started");
+					logger.info("Setup wizard started");
+					Status.deviceList.get(Status.DEVICE1).setDeviceStatus("Device setup in progress");
+					Status.deviceList.get(Status.DEVICE2).setDeviceStatus("Device setup in progress");
+					break;
+				} else if (device1Status == 2) {
+					logger.info("Devices communication failed");
+					logger.info(Status.DEVICE1_ID.toString() + "is in offline");
+					Status.MESSAGE = new StringBuffer(
+							"Devices communication failed \n" + Status.DEVICE1_ID.toString() + "is in offline");
+					break;
+				} else if (device2Status == 2) {
+					logger.info("Devices communication failed");
+					logger.info(Status.DEVICE2_ID.toString() + "is in offline");
+					Status.MESSAGE = new StringBuffer(
+							"Devices communication failed \n" + Status.DEVICE2_ID.toString() + "is in offline");
+					break;
+				}
+				Thread.sleep(10000 * 1);
+			}
+			if (i == 30) {
+				logger.info("Devices communication failed");
+				Status.MESSAGE = new StringBuffer("Devices communication failed");
+				Status.resetStatus();
+			}
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+			Status.resetStatus();
+		}
+		resultModel.setStatus(Status.STATUS.toString());
+		resultModel.setMessage(Status.MESSAGE.toString());
+		return resultModel;
+	}
+
+	@RequestMapping(path = "/startTest")
+	public ResponseModel doTest1() {
+		ResponseModel resultModel = new ResponseModel();
+		try {
+			Status.DEVICE1 = 0;
+			Status.DEVICE2 = 1;
+			Status.STATUS = new StringBuffer("In Progress");
+			Status.MESSAGE = new StringBuffer("");
+			Status.DEVICE1_ID = new StringBuffer(Status.deviceList.get(0).getDeviceId());
+			Status.DEVICE2_ID = new StringBuffer(Status.deviceList.get(1).getDeviceId());
+			Status.deviceList.get(Status.DEVICE1).setDeviceStatus("Flashing completed");
+			Status.deviceList.get(Status.DEVICE2).setDeviceStatus("Flashing completed");
+
+			// TestAutomation automation = new TestAutomation();
+			// automation.start();
+			resultModel.setStatus(Status.STATUS.toString());
+			resultModel.setMessage(Status.MESSAGE.toString());
+			resultModel.setResponse(Status.deviceList);
+			Status.resetStatus();
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+		}
+		return resultModel;
+	}
+
+//	@Scheduled(fixedDelay = 5000)
+//	public void deviceList() {
+//		try {
+//			//logger.info("Device list preparing");
+//			if (Status.STATUS.toString().equals("Ready")) {
+//				AdbCommunication adb = new AdbCommunication();
+//				Status.deviceList = adb.getDeviceList();
+//			}
+//		} catch (Exception e) {
+//			e.printStackTrace();
+//		}
+//	}
+	@RequestMapping(path = "/reset")
+	private String resetFlags() {
+		try {
+			Status.resetStatus();
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			Status.STATUS = new StringBuffer("Exception occured");
+			logger.error(e);
+		}
+		return "Success";
+	}
+	
+
+}

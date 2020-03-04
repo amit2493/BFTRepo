@@ -1,0 +1,538 @@
+package com.hyconosys.bft.automation;
+
+import java.net.URL;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.openqa.selenium.By;
+import org.openqa.selenium.remote.DesiredCapabilities;
+
+import com.google.common.collect.ImmutableMap;
+import com.hyconosys.bft.adb.AdbCommunication;
+import com.hyconosys.bft.model.Status;
+import com.hyconosys.bft.restCall.ApiCall;
+
+import io.appium.java_client.AppiumDriver;
+import io.appium.java_client.MobileElement;
+import io.appium.java_client.android.AndroidDriver;
+import io.appium.java_client.service.local.AppiumDriverLocalService;
+import io.appium.java_client.service.local.AppiumServiceBuilder;
+import io.appium.java_client.service.local.flags.GeneralServerFlag;
+
+public class SetupAutomation extends Thread {
+	private static final Logger logger = LogManager.getLogger(SetupAutomation.class);
+	private String deviceName;
+	private String deviceId;
+	private int deviceIndex;
+	private String androidVersion;
+	private String appuimIP;
+	private String appiumPort;
+	private String wifiName;
+	private String wifiPwd;
+	private String gmailId;
+	private String gmailPwd;
+	AppiumServiceBuilder builder;
+	DesiredCapabilities caps;
+	DesiredCapabilities serviceCaps;
+	AppiumDriver<MobileElement> driver = null;
+	AppiumDriverLocalService service = null;
+	List<String> script;
+	Map<String, Object> command;
+	List<MobileElement> li;
+	LocalDateTime current;
+	DateTimeFormatter format = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
+
+	public SetupAutomation(String deviceName, String deviceId, String androidVersion, String appuimIP,
+			String appiumPort, String wifiName, String wifiPwd, String gmailId, String gmailPwd, int deviceIndex) {
+		this.deviceName = deviceName;
+		this.deviceId = deviceId;
+		this.androidVersion = androidVersion;
+		this.appuimIP = appuimIP;
+		this.appiumPort = appiumPort;
+		this.wifiName = wifiName;
+		this.wifiPwd = wifiPwd;
+		this.gmailId = gmailId;
+		this.gmailPwd = gmailPwd;
+		this.deviceIndex = deviceIndex;
+
+	}
+
+	public void run() {
+		try {
+			ApiCall api = new ApiCall();
+			logger.info("Set up appium");
+			serviceCaps = new DesiredCapabilities();
+			serviceCaps.setCapability("noReset", "false");
+			logger.info("setCapability: noReset and false ");
+
+			builder = new AppiumServiceBuilder();
+			builder.withIPAddress(appuimIP);
+			logger.info("AppiumIP address");
+			builder.usingPort(Integer.valueOf(appiumPort));
+			builder.withCapabilities(serviceCaps);
+			builder.withArgument(GeneralServerFlag.SESSION_OVERRIDE);
+			builder.withArgument(GeneralServerFlag.RELAXED_SECURITY);
+			builder.withArgument(GeneralServerFlag.LOG_LEVEL, "error");
+			builder.withArgument(GeneralServerFlag.ROBOT_PORT, this.appiumPort);
+
+			// Start the server with the builder
+			service = AppiumDriverLocalService.buildService(builder);
+
+			if (!service.isRunning())
+				service.start();
+			logger.info("Appium started");
+			logger.info("Preparing Device : "+this.deviceId);
+			if (!this.prepareDevice()) {
+				logger.info("Device preparation failed with device id: "+this.deviceId+". Exting from process");
+				Status.resetStatus();
+				return;
+			}
+			logger.info("Device : "+this.deviceId+" setup process completed.");
+			this.deviceId = Status.DEVICE2_ID.toString();
+			this.deviceIndex = Status.DEVICE2;
+			logger.info("Preparing Device : "+this.deviceId);
+			if (!this.prepareDevice()) {
+				logger.info("Device preparation failed with device id: "+this.deviceId+". Exting from process");
+				Status.resetStatus();
+				return;
+			}
+			logger.info("Device : "+this.deviceId+" setup process completed.");
+			current = LocalDateTime.now();
+			Status.END_TIME = current.format(format);
+			api.updateStatus("success", "Setting up preconditions", 40);
+			service.stop();
+			logger.info("Appium server service stoped");
+			AdbCommunication adb = new AdbCommunication();
+			logger.info("restarting device: " + Status.DEVICE1_ID);
+			adb.reboot(Status.DEVICE1_ID.toString());
+			logger.info("restarting device: " + Status.DEVICE2_ID);
+			adb.reboot(Status.DEVICE2_ID.toString());
+			Thread.sleep(1000 * 10);
+			adb.killADB();
+			Thread.sleep(1000 * 80);
+			current = LocalDateTime.now();
+			Status.END_TIME = current.format(format);
+			logger.info("success", "Test start", 41);
+			api.updateStatus("success", "Test start", 41);
+			TestAutomation automation = new TestAutomation();
+			automation.start();
+
+		} catch (Exception e) {
+			service.stop();
+			logger.info(e);
+			Status.resetStatus();
+		} finally {
+			logger.info("Appium server service stoped");
+		}
+	}
+
+	public boolean prepareDevice() {
+		try {
+			// Build the Appium service
+			Status.MESSAGE = new StringBuffer("Starting setup with device " + this.deviceId);
+			logger.info("Starting setup with device :" + deviceId);
+			for (int i = 1; i < 7; i++) {
+				if (this.deviceSetup())
+					break;
+				else if (i == 6) {
+					logger.info("Not able to perform task. Stopped setup wizard. Device :" + deviceId);
+					return false;
+				}
+				logger.info("Opening communication channel. Pass " + i + " retrying......, Device :" + deviceId);
+				Thread.sleep(1000 * 30);
+			}
+			logger.info("Completed setup with device :" + deviceId);
+			Thread.sleep(1000 * 10);
+			Status.MESSAGE = new StringBuffer("Updating settings and permissions : " + this.deviceId);
+			logger.info("Updating settings and permissions, Device :" + deviceId);
+			for (int i = 1; i < 4; i++) {
+				if (this.updateSettings())
+					break;
+				else if (i == 3) {
+					logger.info("Not able to perform task. Stopped setup wizard, Device :" + deviceId);
+					return false;
+				}
+				logger.info("Pass " + i + " retrying......, Device :" + deviceId);
+				Thread.sleep(1000 * 20);
+			}
+			logger.info("Seting updates completed. Device :" + deviceId);
+			logger.info("3 minute wating period for google update. Device:" + deviceId);
+			Thread.sleep(1000 * 180);
+			Status.MESSAGE = new StringBuffer("Creating gmail : " + this.deviceId);
+			logger.info("Setup gmail, Device :" + deviceId);
+			for (int i = 1; i < 4; i++) {
+				if (this.gmailSetup())
+					break;
+				else if (i == 3) {
+					logger.info("Not able to perform task. Stopped setup wizard. Device :" + deviceId);
+					Status.resetStatus();
+					return false;
+				}
+				logger.info("Pass " + i + " retrying......, Device :" + deviceId);
+				Thread.sleep(1000 * 20);
+			}
+			logger.info("Setup gmail completed. Device :" + deviceId);
+			Status.deviceList.get(deviceIndex).setDeviceStatus("Setup Completed");
+			logger.info("Setup completed with device : " + deviceId);
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.info("Exception occured. Device :" + deviceId);
+			logger.error(e);
+			Status.resetStatus();
+			return false;
+		}
+		return true;
+	}
+
+	public boolean deviceSetup() {
+		caps = new DesiredCapabilities();
+		logger.info("Device set up");
+		try {
+			logger.info("set capability:deviceName +deviceId +platformName +platformVersion +appPackage +appActivity");
+			caps.setCapability("deviceName", this.deviceName);
+			caps.setCapability("udid", this.deviceId); // Give Device ID of your mobile phone
+			caps.setCapability("platformName", "Android");
+			caps.setCapability("platformVersion", this.androidVersion);
+			caps.setCapability("appPackage", "com.google.android.setupwizard");
+			caps.setCapability("appActivity", "SetupWizardActivity");
+			caps.setCapability("noReset", "true");
+
+			// Instantiate Appium Driver
+			driver = new AndroidDriver<MobileElement>(new URL("http://" + appuimIP + ":" + appiumPort + "/wd/hub"),
+					caps);
+			logger.info("Started setup process");
+			// Language selection
+			logger.info("Language selection");
+			this.clickIfExist("com.google.android.setupwizard:id/start", 2);
+			// Network skip - in case of no SIM card
+			logger.info("Network skip in case of no SIM card");
+			this.clickIfExist("com.google.android.setupwizard:id/skip_button", 2);
+			// Set up as new
+			logger.info("Set up  as new");
+			this.clickIfExist("com.google.android.setupwizard:id/flow_choice_new", 2);
+			// WiFi Skip & //Continue
+			logger.info("skip WIFi and click on continue");
+			if (this.clickIfExist("com.google.android.setupwizard:id/skip_button", 3))
+				this.clickIfExist("android:id/button1", 1);
+			// date time next button
+			logger.info("select date and time");
+			this.clickIfExist("com.google.android.setupwizard:id/next_button", 4);
+			// name next button
+			logger.info("move on next button");
+			this.clickIfExist("com.google.android.setupwizard:id/next_button", 2);
+			// Skip fingerprint
+			logger.info("Skip fingerprint");
+			this.clickIfExist("com.android.settings:id/fingerprint_cancel_button", 2);
+			// Not now -Protect your phone & Skip anyway
+			logger.info("Not now : protect your phone and skip anyway");
+			if (this.clickByClassAndText("android.widget.TextView", "Not now", 2))
+				this.clickIfExist("android:id/button1", 1);
+			// Tap More
+			logger.info("execute script: shell command");
+			Thread.sleep(1000 * 5);
+			script = Arrays.asList("tap", "760 1745");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+			// Tap More
+			logger.info("Tap more");
+			driver.executeScript("mobile: shell", command);
+			// Tap Accept
+			logger.info("Tap accept");
+			driver.executeScript("mobile: shell", command);
+			// tap no thanks
+			logger.info("Tap no thanks");
+			this.clickIfExist("com.google.android.setupwizard:id/skip_button", 2);
+			// Tap Next
+			logger.info("Tap next");
+			Thread.sleep(1000 * 2);
+			script = Arrays.asList("tap", "760 1755");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+		} catch (Exception e) {
+			//Status.resetStatus();
+			// logger.info(e.getMessage());
+			// e.printStackTrace();
+			return false;
+		} finally {
+			// driver.quit();
+		}
+		return true;
+	}
+
+	public boolean updateSettings() {
+		caps = new DesiredCapabilities();
+		logger.info("Update settings");
+		try {
+			caps.setCapability("deviceName", this.deviceName);
+			caps.setCapability("udid", this.deviceId); // Give Device ID of your mobile phone
+			caps.setCapability("platformName", "Android");
+			caps.setCapability("platformVersion", this.androidVersion);
+			caps.setCapability("appPackage", "com.android.settings");
+			caps.setCapability("appActivity", ".Settings");
+			caps.setCapability("noReset", "true");
+
+			// Instantiate Appium Driver
+			driver = new AndroidDriver<MobileElement>(new URL("http://" + appuimIP + ":" + appiumPort + "/wd/hub"),
+					caps);
+			logger.info("Initiate Appium Driver");
+			// select Security
+			Thread.sleep(1000 * 5);
+			logger.info("Select Security:Execute script shell command");
+			script = Arrays.asList("start", "-a android.settings.SECURITY_SETTINGS");
+			command = ImmutableMap.of("command", "am", "args", script);
+			driver.executeScript("mobile: shell", command);
+			// select screen lock
+			logger.info("select indexof screen lock");
+			this.clickByClassAndText("android.widget.TextView", "Screen lock", 2);
+			// select none
+			logger.info("select none");
+			li = driver.findElementsByClassName("android.widget.TextView");
+			li.get(1).click();
+			Thread.sleep(1000 * 5);
+			script = Arrays.asList("keyevent", "KEYCODE_HOME");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			// Set gmail storage permision adb -s 903290c3 shell pm grant
+			// com.google.android.gm android.permission.WRITE_EXTERNAL_STORAGE
+			logger.info("Set gmail storage permission: using adb shell command");
+			Thread.sleep(1000 * 3);
+			script = Arrays.asList("grant", "com.google.android.gm android.permission.WRITE_EXTERNAL_STORAGE");
+			command = ImmutableMap.of("command", "pm", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			Thread.sleep(1000 * 2);
+			script = Arrays.asList("start", "-a android.settings.WIFI_SETTINGS");
+			command = ImmutableMap.of("command", "am", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			// Tap Storage
+			logger.info("size storage");
+			this.clickByClassAndText("android.widget.TextView", this.wifiName, 2);
+			driver.findElementById("com.android.settings:id/password").setValue(this.wifiPwd);
+			this.clickIfExist("android:id/button1", 1);
+
+			logger.info("Screen off time to 30 minutes");
+			Thread.sleep(1000 * 1);
+			script = Arrays.asList("put", "system", "screen_off_timeout", "1800000");
+			command = ImmutableMap.of("command", "settings", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			// Back to Home
+			logger.info("Back to Home");
+			Thread.sleep(1000 * 3);
+			script = Arrays.asList("keyevent", "KEYCODE_HOME");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			Thread.sleep(1000 * 2);
+
+		} catch (Exception e) {
+			// logger.info(e.getMessage());
+			//Status.resetStatus();
+			return false;
+		} finally {
+			// driver.quit();
+		}
+		return true;
+	}
+
+	public boolean gmailSetup() {
+		caps = new DesiredCapabilities();
+		logger.info("Gmail set up");
+		try {
+			caps.setCapability("deviceName", this.deviceName);
+			caps.setCapability("udid", this.deviceId); // Give Device ID of your mobile phone
+			caps.setCapability("platformName", "Android");
+			caps.setCapability("automationName", "UiAutomator1");
+			caps.setCapability("platformVersion", this.androidVersion);
+			caps.setCapability("appPackage", "com.google.android.gm");
+			caps.setCapability("appActivity", ".ui.MailActivityGmail");
+			caps.setCapability("noReset", "true");
+			driver = new AndroidDriver<MobileElement>(new URL("http://" + appuimIP + ":" + appiumPort + "/wd/hub"),
+					caps);
+			Thread.sleep(1000 * 5);
+			logger.info("find element by adding Id attribute on page");
+			driver.findElementById("com.google.android.gm:id/welcome_tour_got_it").click();
+			Thread.sleep(1000 * 10);
+			driver.findElementById("com.google.android.gm:id/setup_addresses_add_another").click();
+			// Tap Google
+			Thread.sleep(1000 * 10);
+			logger.info("Tap Google: find element by using class name attribute");
+			li = driver.findElementsByClassName("android.widget.TextView");
+			li.get(1).click();
+			// for (MobileElement e: li) {
+			// logger.info(e.getText());
+			// if (e.getText().toString().indexOf("Google")>-1) {
+			// e.click();
+			// break;
+			// }
+			// return;
+			// }
+			Thread.sleep(1000 * 20);
+			driver.findElementById("identifierId").setValue(this.gmailId);
+			driver.findElementById("identifierNext").click();
+			Thread.sleep(1000 * 10);
+			driver.findElementByClassName("android.widget.EditText").setValue(this.gmailPwd);
+			// Password next button
+			logger.info("Password next button");
+			driver.findElementById("passwordNext").click();
+			Thread.sleep(1000 * 10);
+			// I agreee
+			logger.info("I agree");
+			driver.findElementById("signinconsentNext").click();
+			Thread.sleep(1000 * 10);
+			// More Button
+			logger.info("More button");
+			driver.findElementByClassName("android.widget.Button").click();
+			Thread.sleep(1000 * 10);
+			// Accept Button
+			logger.info("Accept button");
+			driver.findElementByClassName("android.widget.Button").click();
+			// Take me to gmail
+			logger.info("Take me to gmail");
+			Thread.sleep(1000 * 10);
+			driver.findElementById("com.google.android.gm:id/action_done").click();
+			// Back to Home
+			logger.info("Back to home");
+			Thread.sleep(1000 * 5);
+			script = Arrays.asList("keyevent", "KEYCODE_HOME");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+		} catch (Exception e) {
+			// e.printStackTrace();
+			//Status.resetStatus();
+			return false;
+		} finally {
+			// driver.quit();
+		}
+		return true;
+	}
+
+	public boolean stopAppsAutoupdate() {
+		caps = new DesiredCapabilities();
+		try {
+			logger.info("Stop apps auto updates");
+			caps.setCapability("deviceName", this.deviceName);
+			caps.setCapability("udid", this.deviceId); // Give Device ID of your mobile phone
+			caps.setCapability("platformName", "Android");
+			caps.setCapability("platformVersion", this.androidVersion);
+			caps.setCapability("appPackage", "com.android.vending");
+			caps.setCapability("appActivity", "com.google.android.finsky.activities.MainActivity");
+			caps.setCapability("noReset", "true");
+			driver = new AndroidDriver<MobileElement>(new URL("http://" + appuimIP + ":" + appiumPort + "/wd/hub"),
+					caps);
+			Thread.sleep(1000 * 5);
+			driver.findElementById("com.android.vending:id/main_nav_item").click();
+			// Tap Settings
+			Thread.sleep(1000 * 2);
+			li = driver.findElementsByClassName("android.widget.TextView");
+			logger.info("Tap on settings: find element by using class name attribute");
+			for (int i = 0; i < li.size(); i++) {
+				if (li.get(i).getText().toString().equals("Settings")) {
+					li.get(i).click();
+					break;
+				}
+				if (i == li.size() - 1)
+					return false;
+			}
+			Thread.sleep(1000 * 10);
+			// Auto-update apps
+			logger.info("Auto updates apps activation");
+			li = driver.findElementsByClassName("android.widget.TextView");
+			for (int i = 0; i < li.size(); i++) {
+				if (li.get(i).getText().toString().equals("Auto-update apps")) {
+					li.get(i).click();
+					break;
+				}
+				if (i == li.size() - 1)
+					return false;
+			}
+			// tap Don't auto-update apps
+
+			Thread.sleep(1000 * 2);
+			logger.info("Disable Auto update apps");
+			driver.findElementById("com.android.vending:id/auto_update_settings_never").click();
+
+			// tap done
+			logger.info("click on tap done");
+			Thread.sleep(1000 * 2);
+			driver.findElementById("android:id/button1").click();
+			// Back to Home
+			logger.info("Back to Home");
+			Thread.sleep(1000 * 2);
+			script = Arrays.asList("keyevent", "KEYCODE_HOME");
+			command = ImmutableMap.of("command", "input", "args", script);
+			driver.executeScript("mobile: shell", command);
+
+			Thread.sleep(1000 * 2);
+
+		} catch (Exception e) {
+			// logger.info(e.getMessage());
+			Status.resetStatus();
+			return false;
+		} finally {
+			// driver.quit();
+		}
+		return true;
+	}
+
+	public String startAppium() {
+		logger.info("Start Appium");
+		return "Started";
+
+	}
+
+	private boolean clickIfExist(String elementId, int waitTime) {
+		try {
+			logger.info(elementId + "   searching element , Device :" + deviceId);
+			Thread.sleep(1000 * waitTime);
+			if (driver.findElements(By.id(elementId)).isEmpty()) {
+				logger.info(elementId + "   not found, Device :" + deviceId);
+				return false;
+			}
+			driver.findElementById(elementId).click();
+			logger.info(elementId + "   clicked, Device :" + deviceId);
+			return true;
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.error(e);
+		}
+		return false;
+	}
+
+	private boolean clickByClassAndText(String className, String text, int waitTime) {
+		try {
+			Thread.sleep(1000 * waitTime);
+			// if(driver.findElements(By.linkText(text)).isEmpty())
+			// return false;
+			// driver.findElementByLinkText(text).click();
+			// return true;
+			logger.info(className + ": searching element with class name, Device :" + deviceId);
+			li = driver.findElementsByClassName(className);
+			for (int i = 0; i < li.size(); i++) {
+				if (li.get(i).getText().toString().equals(text)) {
+					li.get(i).click();
+					logger.info(text + ": clicked, Device :" + deviceId);
+					return true;
+				}
+			}
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.info(e);
+		}
+		return false;
+	}
+
+}

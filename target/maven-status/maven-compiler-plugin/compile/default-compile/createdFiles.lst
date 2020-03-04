@@ -1,0 +1,13 @@
+com\sonim\bft\restapi\model\Status.class
+com\sonim\bft\restapi\model\BFTModel.class
+com\sonim\bft\adb\AdbCommunication.class
+com\sonim\bft\ftp\FTPLocal.class
+com\sonim\bft\restapi\model\ResponseModel.class
+com\sonim\bft\automation\SetupAutomation.class
+com\sonim\bft\ftp\FTPFunctions.class
+com\sonim\bft\restapi\controller\BFTController.class
+com\sonim\bft\automation\TestAutomation.class
+com\sonim\bft\compress\TAR.class
+com\sonim\bft\automation\FlashingAutomation.class
+com\sonim\bft\restapi\RestAPIApplication.class
+com\sonim\bft\restapi\model\DeviceModel.class

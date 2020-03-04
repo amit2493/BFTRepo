@@ -1,0 +1,103 @@
+package com.hyconosys.bft.adb;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+public class BFTInfo {
+	private static final Logger logger = LogManager.getLogger(BFTInfo.class);
+	String cmd1 = "adb version";
+	String cmd2 = "java -version";
+	String cmd3 = "appium -v";
+	String cmd4 = "cmd /C systeminfo | find \"OS Name\"";
+	String cmd5 = "npm -v";
+	BufferedReader input = null;
+	BufferedReader err = null;
+
+	public void BFT_Info() {
+		try {
+			Process p;
+			// OS Version
+			logger.info("command for windows version: " + cmd4);
+			p = Runtime.getRuntime().exec(cmd4);
+			p.waitFor();
+			String line;
+
+			err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+			while ((line = err.readLine()) != null) {
+				logger.error("Error :" + line);
+			}
+			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+			while ((line = input.readLine()) != null) {
+				logger.info("Windows Version is :" + line);
+
+			}
+
+			// ADB Version
+			logger.info("command for adb version: " + cmd1);
+			p = Runtime.getRuntime().exec(cmd1);
+			p.waitFor();
+			err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+			while ((line = err.readLine()) != null) {
+				logger.error("Error :" + line);
+			}
+			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+			while ((line = input.readLine()) != null) {
+				logger.info("ADB Version is :" + line);
+
+			}
+			// JAVA Version
+			logger.info("command for java version: " + cmd2);
+			p = Runtime.getRuntime().exec(cmd2);
+			p.waitFor();
+			err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+			while ((line = err.readLine()) != null) {
+				logger.error(line);
+			}
+			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+			// logger.info("JAVA version is : ");
+			while ((line = input.readLine()) != null) {
+				logger.info(line);
+
+			}
+			// Node JS Version
+//			logger.info("command for Node_JS version: " + cmd5);
+//			p = Runtime.getRuntime().exec(cmd5);
+//			p.waitFor();
+//			err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+//			while ((line = err.readLine()) != null) {
+//				logger.error(line);
+//			}
+//			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+//			// logger.info("Node_JS version is : ");
+//			while ((line = input.readLine()) != null) {
+//				logger.info(line);
+//
+//			}
+
+			// APPIUM Version
+//			logger.info("command for Appium version: " + cmd3);
+//
+//			p = Runtime.getRuntime().exec(cmd3);
+//			p.waitFor();
+//			err = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+//			while ((line = err.readLine()) != null) {
+//				logger.error("Error: " + line);
+//			}
+//			input = new BufferedReader(new InputStreamReader(p.getInputStream()));
+//			logger.info("Appium version is : ");
+//			while ((line = input.readLine()) != null) {
+//				logger.info(line);
+//
+//			}
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.error(e);
+		}
+	}
+}
